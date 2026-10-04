@@ -4,7 +4,7 @@ body{font-family:Arial,sans-serif;background:#111;color:#fff;margin:0;padding:20
 <div class="card" id="loginCard"><h2>Staff Login</h2><input id="email" type="email" placeholder="Staff email"><input id="password" type="password" placeholder="Password"><button onclick="login()">Sign in</button><div id="loginMsg" class="muted"></div></div>
 <div class="card hidden" id="scanCard"><h2>Scan Ticket</h2><button onclick="startScanner()">Start QR Scanner</button><div id="reader"></div><input id="manual" placeholder="Manual QR payload or ticket ID"><button class="secondary" onclick="verifyManual()">Verify</button><div id="decoded" class="muted"></div><div id="result"></div></div>
 </div><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script><script src="config.js"></script><script>
-const CONFIG = window.CONFIG || {};
+const APP_CONFIG = window.CONFIG || {};
 const emailEl = document.getElementById('email');
 const passwordEl = document.getElementById('password');
 const loginMsgEl = document.getElementById('loginMsg');
@@ -13,16 +13,70 @@ const scanCardEl = document.getElementById('scanCard');
 const manualEl = document.getElementById('manual');
 const decodedEl = document.getElementById('decoded');
 const resultEl = document.getElementById('result');
-const sb = window.supabase && window.supabase.createClient ? window.supabase.createClient(CONFIG.SUPABASE_URL || '', CONFIG.SUPABASE_ANON_KEY || '') : null;
+let sb = null;
 let scanner=null;
 
 function parse(v){v=(v||'').trim(); const p=v.split('|'); if(p.length===3&&p[0]==='LUXEFOODS') return {ticket_id:p[1],qr_token:p[2],raw:v}; const m=v.match(/^(WALNUT|MAHOGANY)-\d{3}$/); if(m) return {ticket_id:v,qr_token:'',raw:v}; return {ticket_id:'',qr_token:'',raw:v};}
 
-function ensureConfig(){if(!CONFIG.SUPABASE_URL || !CONFIG.SUPABASE_ANON_KEY || !CONFIG.VERIFY_FUNCTION_URL){loginMsgEl.textContent='Missing config.js values. Copy public/config.example.js to public/config.js and fill in the project settings.'; return false;} return true;}
+function ensureConfig(){
+  if(!APP_CONFIG.SUPABASE_URL || !APP_CONFIG.SUPABASE_ANON_KEY || !APP_CONFIG.VERIFY_FUNCTION_URL || APP_CONFIG.SUPABASE_URL.includes('YOUR_PROJECT') || APP_CONFIG.SUPABASE_ANON_KEY.includes('YOUR_')){
+    loginMsgEl.textContent='Set your Supabase Project URL, publishable/anon key, and function URL in public/config.js.';
+    return false;
+  }
 
-async function login(){if(!ensureConfig() || !sb){return;} const {error}=await sb.auth.signInWithPassword({email:emailEl.value,password:passwordEl.value});loginMsgEl.textContent=error?error.message:'Signed in.';if(!error){loginCardEl.classList.add('hidden');scanCardEl.classList.remove('hidden');}}
+  let projectUrl;
+  let functionUrl;
+  try {
+    projectUrl = new URL(APP_CONFIG.SUPABASE_URL);
+    functionUrl = new URL(APP_CONFIG.VERIFY_FUNCTION_URL);
+  } catch {
+    loginMsgEl.textContent='The Supabase URLs in public/config.js are invalid.';
+    return false;
+  }
 
-async function verify(raw){const p=parse(raw);decodedEl.textContent='Decoded: '+(p.ticket_id||raw); if(!p.ticket_id||!p.qr_token){show('INVALID','This is not a secure Luxe Foods QR code.','invalid');return;} if(!sb){show('INVALID','Supabase is not available. Check the site configuration.','invalid');return;} const {data:{session}}=await sb.auth.getSession(); if(!session){show('INVALID','Please sign in again.','invalid');return;} const r=await fetch(CONFIG.VERIFY_FUNCTION_URL,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.access_token},body:JSON.stringify({ticket_id:p.ticket_id,qr_token:p.qr_token,qr_payload:p.raw})}); const j=await r.json(); if(j.result==='VALID')show('ENTRY GRANTED',j.ticket_id+' · '+j.ticket_type+' · Le '+Number(j.price).toLocaleString(),'valid'); else if(j.result==='ALREADY_USED')show('ALREADY USED',j.ticket_id+' was already checked in.', 'used'); else show('INVALID',j.message||'Ticket not recognized.','invalid');}
+  if(projectUrl.protocol !== 'https:' || !projectUrl.hostname.endsWith('.supabase.co') || projectUrl.hostname.startsWith('sb_publishable_')){
+    loginMsgEl.textContent='The Supabase Project URL is incorrect. Copy the Project URL from Supabase > Project Settings > API; do not use a key as the project name.';
+    return false;
+  }
+  if(functionUrl.protocol !== 'https:' || functionUrl.origin !== projectUrl.origin || functionUrl.pathname !== '/functions/v1/verify-ticket'){
+    loginMsgEl.textContent='The function URL must be https://<project-ref>.supabase.co/functions/v1/verify-ticket for this same Supabase project.';
+    return false;
+  }
+  if(!window.supabase || !window.supabase.createClient){
+    loginMsgEl.textContent='Supabase login library did not load. Check your internet connection and reload this page.';
+    return false;
+  }
+  return true;
+}
+
+async function login(){
+  try {
+    if(!ensureConfig()) return;
+
+    const email = (emailEl.value || '').trim();
+    const password = passwordEl.value || '';
+    if(!email || !password){
+      loginMsgEl.textContent = 'Enter staff email and password.';
+      return;
+    }
+
+    loginMsgEl.textContent = 'Signing in...';
+    sb = window.supabase.createClient(APP_CONFIG.SUPABASE_URL, APP_CONFIG.SUPABASE_ANON_KEY);
+    const {error} = await sb.auth.signInWithPassword({email, password});
+    if(error){
+      loginMsgEl.textContent = error.message || 'Login failed.';
+      return;
+    }
+
+    loginMsgEl.textContent = 'Signed in.';
+    loginCardEl.classList.add('hidden');
+    scanCardEl.classList.remove('hidden');
+  } catch (error) {
+    loginMsgEl.textContent = error && error.message ? error.message : 'Unexpected login error.';
+  }
+}
+
+async function verify(raw){try{const p=parse(raw);decodedEl.textContent='Decoded: '+(p.ticket_id||raw); if(!p.ticket_id||!p.qr_token){show('INVALID','This is not a secure Luxe Foods QR code.','invalid');return;} if(!sb){show('INVALID','Please sign in before verifying tickets.','invalid');return;} const {data:{session}}=await sb.auth.getSession(); if(!session){show('INVALID','Please sign in again.','invalid');return;} const r=await fetch(APP_CONFIG.VERIFY_FUNCTION_URL,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.access_token},body:JSON.stringify({ticket_id:p.ticket_id,qr_token:p.qr_token,qr_payload:p.raw})}); const j=await r.json(); if(j.result==='VALID')show('ENTRY GRANTED',j.ticket_id+' · '+j.ticket_type+' · Le '+Number(j.price).toLocaleString(),'valid'); else if(j.result==='ALREADY_USED')show('ALREADY USED',j.ticket_id+' was already checked in.', 'used'); else show('INVALID',j.message||'Ticket not recognized.','invalid');}catch(error){show('INVALID',error && error.message ? error.message : 'Verification failed.','invalid');}}
 
 function verifyManual(){verify(manualEl.value)}
 function show(a,b,c){resultEl.innerHTML='<div class="status '+c+'"><div>'+a+'</div><div class="ticket">'+b+'</div></div>'}
