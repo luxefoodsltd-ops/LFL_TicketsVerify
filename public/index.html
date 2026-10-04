@@ -19,8 +19,16 @@ let scanner=null;
 function parse(v){v=(v||'').trim(); const p=v.split('|'); if(p.length===3&&p[0]==='LUXEFOODS') return {ticket_id:p[1],qr_token:p[2],raw:v}; const m=v.match(/^(WALNUT|MAHOGANY)-\d{3}$/); if(m) return {ticket_id:v,qr_token:'',raw:v}; return {ticket_id:'',qr_token:'',raw:v};}
 
 function ensureConfig(){
-  if(!APP_CONFIG.SUPABASE_URL || !APP_CONFIG.SUPABASE_ANON_KEY || !APP_CONFIG.VERIFY_FUNCTION_URL || APP_CONFIG.SUPABASE_URL.includes('YOUR_PROJECT') || APP_CONFIG.SUPABASE_ANON_KEY.includes('YOUR_')){
-    loginMsgEl.textContent='Set your Supabase Project URL, publishable/anon key, and function URL in public/config.js.';
+  if(!APP_CONFIG.SUPABASE_URL || APP_CONFIG.SUPABASE_URL.includes('YOUR_PROJECT')){
+    loginMsgEl.textContent='Supabase has not been contacted. public/config.js needs the real Project URL from Supabase > Project Settings > API (for example, https://abcdefgh.supabase.co). The login credentials are not the cause of this message.';
+    return false;
+  }
+  if(!APP_CONFIG.SUPABASE_ANON_KEY || APP_CONFIG.SUPABASE_ANON_KEY.includes('YOUR_')){
+    loginMsgEl.textContent='Add the project publishable key (or anon key) from Supabase > Project Settings > API to public/config.js.';
+    return false;
+  }
+  if(!APP_CONFIG.VERIFY_FUNCTION_URL || APP_CONFIG.VERIFY_FUNCTION_URL.includes('YOUR_PROJECT')){
+    loginMsgEl.textContent='Add the verify-ticket Edge Function URL for the same Supabase project to public/config.js.';
     return false;
   }
 
